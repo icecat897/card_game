@@ -1,0 +1,21 @@
+{
+  "name": "webmaster",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "蛛网之主 - Roguelike Spider Solitaire",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "pixi.js": "^8.6.6",
+    "gsap": "^3.12.5"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11"
+  }
+}
