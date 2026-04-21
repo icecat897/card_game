@@ -175,6 +175,16 @@ addDict('en', {
   'potion.emergency_clear.desc': 'Force-clear the longest same-suit run (>=3 cards).',
   'potion.reshuffle.name': 'Reshuffle',
   'potion.reshuffle.desc': 'Reshuffle the stock pile.',
+  'potion.dust.name': 'Ashen Dust',
+  'potion.dust.desc': 'Permanently remove one face-up card from your deck.',
+
+  'dust_target_hint': 'Click any face-up card to permanently remove it from your deck. Click the potion again to cancel.',
+
+  'deckviewer.title': 'YOUR DECK',
+  'deckviewer.summary': 'Total: {total}   Enhanced: {enhanced}   Removed: {removed}',
+  'deckviewer.close': 'CLOSE',
+  'deckviewer.removed_label': 'REMOVED',
+  'deckbutton.label': 'Deck',
 
   'scroll.silk_scroll.name': 'Silk Weave',
   'scroll.silk_scroll.desc': 'Turn any face-up card into a Silk card (+30 Chips when moved).',
@@ -365,6 +375,16 @@ addDict('zh', {
   'potion.emergency_clear.desc': '强制消除最长的同花色序列（≥3 张）。',
   'potion.reshuffle.name': '重织蛛网',
   'potion.reshuffle.desc': '重新洗牌堆。',
+  'potion.dust.name': '焚烬之灰',
+  'potion.dust.desc': '从牌组中永久除去一张翻开的牌。',
+
+  'dust_target_hint': '点击任意翻开的牌将其从牌组中永久除去。再次点击药剂可取消。',
+
+  'deckviewer.title': '牌组',
+  'deckviewer.summary': '共 {total} 张   强化 {enhanced}   已除去 {removed}',
+  'deckviewer.close': '关闭',
+  'deckviewer.removed_label': '已除去',
+  'deckbutton.label': '牌组',
 
   'scroll.silk_scroll.name': '丝絮卷轴',
   'scroll.silk_scroll.desc': '将任意翻开的牌变为丝絮牌（移动时 +30 基础分）。',

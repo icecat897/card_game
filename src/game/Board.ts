@@ -2,6 +2,12 @@ import { Card } from './Card'
 import { createDecks } from './Deck'
 import { canPlaceOnColumn, checkClearableSequence, getMovableSequence, hasAnyLegalMove } from './Rules'
 import { COLUMN_COUNT, SCORING } from '../config/constants'
+import type { Enhancement } from './Enhancement'
+
+export interface RunDeckState {
+  enhancements: ReadonlyMap<string, Enhancement>
+  removedIds: ReadonlySet<string>
+}
 
 export interface ClearResult {
   columnIndex: number
@@ -30,12 +36,18 @@ export class Board {
   clearCount: number = 0
   kaCount: number = 0
 
-  constructor(seed?: number) {
-    this.reset(seed)
+  constructor(seed?: number, runState?: RunDeckState) {
+    this.reset(seed, runState)
   }
 
-  reset(seed?: number): void {
-    const allCards = createDecks(seed)
+  reset(seed?: number, runState?: RunDeckState): void {
+    const allCards = createDecks(seed, runState?.removedIds)
+    if (runState?.enhancements && runState.enhancements.size > 0) {
+      for (const c of allCards) {
+        const enh = runState.enhancements.get(c.id)
+        if (enh) c.enhancement = enh
+      }
+    }
     this.columns = Array.from({ length: COLUMN_COUNT }, () => [])
     this.collected = []
     this.clearCount = 0
@@ -43,8 +55,9 @@ export class Board {
     let idx = 0
     for (let col = 0; col < COLUMN_COUNT; col++) {
       const count = col < 4 ? 6 : 5
-      for (let i = 0; i < count; i++) this.columns[col].push(allCards[idx++])
-      this.columns[col][count - 1].faceUp = true
+      for (let i = 0; i < count && idx < allCards.length; i++) this.columns[col].push(allCards[idx++])
+      const top = this.columns[col][this.columns[col].length - 1]
+      if (top) top.faceUp = true
     }
     this.stock = allCards.slice(idx)
   }

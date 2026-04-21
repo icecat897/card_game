@@ -19,6 +19,8 @@ import { HelpModal } from './ui/HelpModal'
 import { SettingsButton } from './ui/SettingsButton'
 import { LanguageToggle } from './ui/LanguageToggle'
 import { SoundToggle } from './ui/SoundToggle'
+import { DeckViewer } from './ui/DeckViewer'
+import { DeckButton } from './ui/DeckButton'
 import { Tooltip } from './ui/Tooltip'
 import { BossBanner } from './ui/BossBanner'
 import { ScoreEngine } from './scoring/ScoreEngine'
@@ -34,15 +36,10 @@ import {
   GAME_HEIGHT,
   GAME_WIDTH
 } from './config/constants'
-import type { Enhancement } from './game/Enhancement'
 import type { Card } from './game/Card'
 import { onLangChange, t } from './i18n/i18n'
 import { checkClearableSequence } from './game/Rules'
 
-const ENHANCEMENT_POOL: Enhancement[] = [
-  'silk', 'venom', 'gilded', 'brittle', 'dewdrop', 'petrified'
-]
-const ENHANCEMENTS_PER_LEVEL = 5
 const REROLL_COST = 3
 const BOSS_BONUS = 15
 
@@ -74,6 +71,8 @@ export class Game {
   private soundToggle!: SoundToggle
   private tooltip!: Tooltip
   private bossBanner!: BossBanner
+  private deckViewer!: DeckViewer
+  private deckButton!: DeckButton
   private scoreBurst: ScoreBurst
   private kaCascade: KACascade
 
@@ -81,6 +80,7 @@ export class Game {
   private busy: boolean = false
   private levelEnded: boolean = false
   private activeScrollUid: string | null = null
+  private dustPotionUid: string | null = null
   private shopItems: ShopItem[] = []
 
   constructor(app: Application) {
@@ -162,6 +162,15 @@ export class Game {
     this.soundToggle.y = 66
     this.uiLayer.addChild(this.soundToggle)
 
+    this.deckButton = new DeckButton()
+    this.deckButton.x = GAME_WIDTH - 350
+    this.deckButton.y = 66
+    this.deckButton.onClick = () => {
+      sound.playButton()
+      this.deckViewer.show(this.run.deckEnhancements, this.run.removedCardIds)
+    }
+    this.uiLayer.addChild(this.deckButton)
+
     this.shop = new Shop()
     this.shop.onBuy = (item) => this.tryBuy(item)
     this.shop.onReroll = () => this.tryReroll()
@@ -177,6 +186,9 @@ export class Game {
     this.bossBanner = new BossBanner()
     this.uiLayer.addChild(this.bossBanner)
 
+    this.deckViewer = new DeckViewer()
+    this.uiLayer.addChild(this.deckViewer)
+
     this.tooltip = new Tooltip()
     this.uiLayer.addChild(this.tooltip)
 
@@ -187,6 +199,8 @@ export class Game {
     this.insectSlots.onHoverDescribe = showTip
     this.scrollTray.onHoverDescribe = showTip
     this.potionTray.onHoverDescribe = showTip
+    this.deckButton.onHoverDescribe = showTip
+    this.deckViewer.onHoverDescribe = showTip
 
     onLangChange(() => this.onLanguageChanged())
 
@@ -195,33 +209,8 @@ export class Game {
     this.inventory.addPotion(POTIONS.time_honey)
 
     this.stepsLeft = this.run.currentStepLimit
-    this.applyRandomEnhancements(ENHANCEMENTS_PER_LEVEL)
     this.refreshHud()
     this.dealInitialAnimation()
-  }
-
-  private applyRandomEnhancements(count: number): void {
-    const pool: Card[] = []
-    for (const col of this.board.columns) pool.push(...col)
-    for (const c of this.board.stock) pool.push(c)
-    for (let i = pool.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1))
-      ;[pool[i], pool[j]] = [pool[j], pool[i]]
-    }
-    let applied = 0
-    for (const c of pool) {
-      if (applied >= count) break
-      if (c.enhancement === 'none') {
-        c.enhancement = ENHANCEMENT_POOL[Math.floor(Math.random() * ENHANCEMENT_POOL.length)]
-        applied++
-      }
-    }
-    for (const col of this.board.columns) {
-      for (const c of col) {
-        const s = this.boardView.getSprite(c)
-        if (s && c.faceUp) s.redraw()
-      }
-    }
   }
 
   private onLanguageChanged(): void {
@@ -234,6 +223,7 @@ export class Game {
     this.insectSlots.applyLang()
     this.scrollTray.applyLang()
     this.potionTray.applyLang()
+    this.deckViewer.applyLang()
   }
 
   private refreshHud(): void {
@@ -442,6 +432,7 @@ export class Game {
 
   private onScrollClicked(uid: string): void {
     if (this.busy || this.levelEnded) return
+    if (this.dustPotionUid) this.cancelDustMode()
     if (this.activeScrollUid === uid) {
       this.cancelScrollMode()
       return
@@ -465,11 +456,29 @@ export class Game {
     this.tooltip.hide()
   }
 
+  private enterDustMode(uid: string): void {
+    if (this.activeScrollUid) this.cancelScrollMode()
+    this.dustPotionUid = uid
+    this.boardView.mode = 'target'
+    this.tooltip.show(t('dust_target_hint'), GAME_WIDTH / 2, 220)
+  }
+
+  private cancelDustMode(): void {
+    this.dustPotionUid = null
+    this.boardView.mode = 'drag'
+    this.tooltip.hide()
+  }
+
   private handleCardTargeted(card: Card): void {
+    if (this.dustPotionUid) {
+      void this.applyDust(card)
+      return
+    }
     if (!this.activeScrollUid) return
     const scroll = this.inventory.scrolls.find(s => s.uid === this.activeScrollUid)
     if (!scroll) { this.cancelScrollMode(); return }
     card.enhancement = scroll.def.enhancement
+    this.run.deckEnhancements.set(card.id, scroll.def.enhancement)
     const sprite = this.boardView.getSprite(card)
     if (sprite) {
       sprite.redraw()
@@ -482,14 +491,66 @@ export class Game {
     sound.playScroll()
   }
 
+  private async applyDust(card: Card): Promise<void> {
+    if (!this.dustPotionUid) return
+    const potionUid = this.dustPotionUid
+    // Find card in board columns and remove
+    let found = false
+    for (const col of this.board.columns) {
+      const idx = col.indexOf(card)
+      if (idx !== -1) {
+        col.splice(idx, 1)
+        // If this card was the top face-up card and there's a face-down card beneath, flip it
+        if (idx === col.length && col.length > 0) {
+          const newTop = col[col.length - 1]
+          if (!newTop.faceUp) {
+            newTop.faceUp = true
+            const s = this.boardView.getSprite(newTop)
+            if (s) {
+              s.card.faceUp = false
+              void s.playFlipFromBack()
+            }
+          }
+        }
+        found = true
+        break
+      }
+    }
+    if (!found) return
+    this.run.removedCardIds.add(card.id)
+
+    const sprite = this.boardView.getSprite(card)
+    if (sprite) {
+      gsap.to(sprite.scale, { x: 1.4, y: 1.4, duration: 0.35, ease: 'power2.out' })
+      gsap.to(sprite, { alpha: 0, duration: 0.35, onComplete: () => { sprite.parent?.removeChild(sprite) } })
+    }
+
+    this.inventory.removePotion(potionUid)
+    this.cancelDustMode()
+    sound.playPotion()
+    this.potionTray.update(this.inventory.potions)
+    this.boardView.layout(false)
+    this.refreshHud()
+    this.checkLevelEnd()
+  }
+
   private onPotionClicked(uid: string): void {
     if (this.busy || this.levelEnded) return
+    if (this.dustPotionUid === uid) {
+      this.cancelDustMode()
+      return
+    }
     const potion = this.inventory.potions.find(p => p.uid === uid)
     if (!potion) return
     this.executePotion(potion.uid, potion.def.effect)
   }
 
   private async executePotion(uid: string, effect: string): Promise<void> {
+    if (effect === 'dust') {
+      this.enterDustMode(uid)
+      sound.playButton()
+      return
+    }
     sound.playPotion()
     switch (effect) {
       case 'time_honey':
@@ -705,12 +766,15 @@ export class Game {
     this.levelEnded = false
     this.stepsLeft = this.run.currentStepLimit
     this.scoreEngine.resetForNextLevel()
-    this.board.reset()
+    this.board.reset(undefined, {
+      enhancements: this.run.deckEnhancements,
+      removedIds: this.run.removedCardIds
+    })
     this.boardView.rebuild()
     this.boardView.mode = 'drag'
     this.activeScrollUid = null
+    this.dustPotionUid = null
     this.scrollTray.setActive(null)
-    this.applyRandomEnhancements(ENHANCEMENTS_PER_LEVEL)
     this.refreshHud()
     this.hud.setLastPlay(0, 1)
     this.hud.setCombo(0, 1)

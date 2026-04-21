@@ -6,6 +6,7 @@ export type PotionEffect =
   | 'seers_eye'        // flip 3 random face-down cards
   | 'emergency_clear'  // force-clear longest same-suit run at any column bottom (>=3)
   | 'reshuffle'        // shuffle stock pile
+  | 'dust'             // permanently remove one face-up card from the deck
   | 'jump_web'         // duplicate a face-up card to empty column (simplified: nope, skip)
 
 export interface PotionDef {
@@ -89,6 +90,16 @@ export const POTIONS: Record<string, PotionDef> = {
     rarity: 1,
     glyph: 'S',
     color: 0x7fdcb1
+  },
+  dust: {
+    id: 'dust',
+    name: 'Ashen Dust',
+    description: 'Permanently remove one face-up card from your deck.',
+    effect: 'dust',
+    price: 6,
+    rarity: 3,
+    glyph: '\u2620',
+    color: 0xb08a6a
   }
 }
 

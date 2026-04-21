@@ -1,12 +1,21 @@
-import { Card, SUITS, type Rank } from './Card'
+import { Card, SUITS, type Rank, type Suit } from './Card'
 
-export function createDecks(seed?: number): Card[] {
+const SUIT_LETTER: Record<Suit, string> = {
+  spades: 'S', hearts: 'H', clubs: 'C', diamonds: 'D'
+}
+
+export function cardIdOf(suit: Suit, rank: Rank, deckIdx: number): string {
+  return `${SUIT_LETTER[suit]}${rank}-${deckIdx}`
+}
+
+export function createDecks(seed?: number, removedIds?: ReadonlySet<string>): Card[] {
   const cards: Card[] = []
-  let idCounter = 0
   for (let deck = 0; deck < 2; deck++) {
     for (const suit of SUITS) {
       for (let rank = 1; rank <= 13; rank++) {
-        cards.push(new Card(suit, rank as Rank, `c${idCounter++}`))
+        const id = cardIdOf(suit, rank as Rank, deck)
+        if (removedIds?.has(id)) continue
+        cards.push(new Card(suit, rank as Rank, id))
       }
     }
   }

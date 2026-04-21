@@ -1,8 +1,13 @@
 import { ANTE_TARGETS, COIN_REWARDS, STEP_LIMIT_DEFAULT } from '../config/constants'
+import type { Enhancement } from './Enhancement'
 
 export class Run {
   ante: number = 0
   coins: number = 0
+  /** Persistent enhancements keyed by stable card id (e.g. "S1-0"). Survives across levels within a run. */
+  deckEnhancements: Map<string, Enhancement> = new Map()
+  /** Card ids permanently removed from the deck this run. */
+  removedCardIds: Set<string> = new Set()
 
   get currentTarget(): number {
     const base = ANTE_TARGETS[Math.min(this.ante, ANTE_TARGETS.length - 1)]
@@ -46,6 +51,8 @@ export class Run {
   reset(): void {
     this.ante = 0
     this.coins = 0
+    this.deckEnhancements.clear()
+    this.removedCardIds.clear()
   }
 
   isCampaignComplete(): boolean {
