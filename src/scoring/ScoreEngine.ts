@@ -26,8 +26,16 @@ export class ScoreEngine {
   private scrollsUsedThisRound: number = 0
   private nextMoveScoreMult: number = 1
   private inventory?: Inventory
+  private coinsGetter: () => number = () => 0
+  private clearChipsPenalty: number = 1
+  private characterMoveChipsBonus: number = 0
 
   setInventory(inv: Inventory): void { this.inventory = inv }
+  setCoinsGetter(fn: () => number): void { this.coinsGetter = fn }
+  /** boss 效果：消除时 Chips × penalty（<1 削弱，>1 加成） */
+  setClearChipsPenalty(v: number): void { this.clearChipsPenalty = v }
+  /** 角色被动：每次移动额外 +N Chips */
+  setCharacterMoveChipsBonus(v: number): void { this.characterMoveChipsBonus = v }
 
   getTotal(): number { return this.totalScore }
   getClearCount(): number { return this.clearCountThisRound }
@@ -45,6 +53,7 @@ export class ScoreEngine {
     if (emptyColumnCount > 0) this.emptyEverAppeared = true
 
     let chips = SCORING.CHIPS_PER_MOVE * move.sequenceLength * move.sequenceLength
+    chips += this.characterMoveChipsBonus
     let mult = 1
     let clearMultMultiplier = 1
     let clearChipsMultiplier = 1
@@ -58,8 +67,12 @@ export class ScoreEngine {
     }
 
     if (this.inventory) {
-      const insectCount = this.inventory.insects.length
-      for (const ins of this.inventory.insects) {
+      const allActive = this.inventory.allActiveInsects()
+      const insectCount = allActive.length
+      const regularInsectCount = this.inventory.insects.length
+      const currentCoins = this.coinsGetter()
+
+      for (const ins of allActive) {
         const d = ins.def
         if (d.onMoveChipsBonus) chips += d.onMoveChipsBonus
         if (d.onMoveMultBonus) mult += d.onMoveMultBonus
@@ -72,6 +85,13 @@ export class ScoreEngine {
         }
         if (d.perInsectMultBonus) mult += d.perInsectMultBonus * insectCount
         if (d.scrollUseMultAccum) mult += d.scrollUseMultAccum * this.scrollsUsedThisRound
+        if (d.moneyPerMult && d.moneyPerMult > 0) {
+          mult += Math.floor(currentCoins / d.moneyPerMult)
+        }
+        // Foundation 专属：其他每张昆虫额外加 Chips
+        if (d.isFoundation && d.foundationPerInsectChips) {
+          chips += d.foundationPerInsectChips * regularInsectCount
+        }
       }
     }
 
@@ -80,7 +100,7 @@ export class ScoreEngine {
       const flipSpec = ENHANCEMENTS[move.flippedCard.enhancement]
       coinBonus += flipSpec.flipCoinBonus
       if (this.inventory) {
-        for (const ins of this.inventory.insects) {
+        for (const ins of this.inventory.allActiveInsects()) {
           if (ins.def.onFlipMultAccum) this.flipMultAccumulated += ins.def.onFlipMultAccum
           if (ins.def.onFlipXMultAdd) this.xmult += ins.def.onFlipXMultAdd
         }
@@ -97,13 +117,17 @@ export class ScoreEngine {
         clearMultMultiplier *= spec.clearMultMult
       }
       if (this.inventory) {
-        for (const ins of this.inventory.insects) {
+        const currentCoins = this.coinsGetter()
+        for (const ins of this.inventory.allActiveInsects()) {
           if (ins.def.onClearXMultAdd) this.xmult += ins.def.onClearXMultAdd
           if (ins.def.onClearStepRefund) stepRefund += ins.def.onClearStepRefund
           if (ins.def.clearCoinBonus) coinBonus += ins.def.clearCoinBonus
           if (ins.def.clearChipsMult) clearChipsMultiplier *= ins.def.clearChipsMult
           if (ins.def.firstClearXMultBonus && !this.firstClearDone) {
             this.xmult += ins.def.firstClearXMultBonus
+          }
+          if (ins.def.moneyPerXMultOnClear && ins.def.moneyPerXMultOnClear > 0) {
+            this.xmult += 0.04 * Math.floor(currentCoins / ins.def.moneyPerXMultOnClear)
           }
         }
       }
@@ -114,7 +138,7 @@ export class ScoreEngine {
     mult += this.clearCountThisRound * SCORING.MULT_PER_CLEAR
     let emptyMultPer: number = SCORING.MULT_PER_EMPTY_COLUMN
     if (this.inventory) {
-      for (const ins of this.inventory.insects) {
+      for (const ins of this.inventory.allActiveInsects()) {
         if (ins.def.emptyColumnMultOverride !== undefined) {
           emptyMultPer = Math.max(emptyMultPer, ins.def.emptyColumnMultOverride)
         }
@@ -130,11 +154,13 @@ export class ScoreEngine {
       this.xmult += SCORING.KA_XMULT_BONUS
     }
 
+    // Boss 惩罚只作用于 clear 相关 Chips（通过 clearChipsPenalty 缩放整体 Chips 乘数）
     chips *= clearChipsMultiplier
+    if (move.cleared) chips *= this.clearChipsPenalty
 
     let effectiveXMult = this.xmult
     if (this.inventory && !this.emptyEverAppeared) {
-      for (const ins of this.inventory.insects) {
+      for (const ins of this.inventory.allActiveInsects()) {
         if (ins.def.noEmptyColumnXMult) effectiveXMult *= ins.def.noEmptyColumnXMult
       }
     }
@@ -170,6 +196,7 @@ export class ScoreEngine {
     this.firstClearDone = false
     this.scrollsUsedThisRound = 0
     this.nextMoveScoreMult = 1
+    this.clearChipsPenalty = 1
   }
 
   resetAll(): void {

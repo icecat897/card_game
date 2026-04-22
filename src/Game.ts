@@ -18,6 +18,8 @@ import { Shop, type ShopItem, rollShopItems } from './ui/Shop'
 import { HelpModal } from './ui/HelpModal'
 import { SettingsButton } from './ui/SettingsButton'
 import { LanguageToggle } from './ui/LanguageToggle'
+import { CharacterSelect } from './ui/CharacterSelect'
+import type { CharacterId } from './game/Character'
 import { SoundToggle } from './ui/SoundToggle'
 import { DeckViewer } from './ui/DeckViewer'
 import { DeckButton } from './ui/DeckButton'
@@ -31,8 +33,12 @@ import { sound } from './fx/SoundEngine'
 import { BackgroundFX } from './fx/BackgroundFX'
 import {
   CARD_WIDTH,
+  CARD_HEIGHT,
   COIN_REWARDS,
   COLUMN_COUNT,
+  COLUMN_START_X,
+  COLUMN_GAP,
+  COLUMN_Y,
   GAME_HEIGHT,
   GAME_WIDTH
 } from './config/constants'
@@ -67,6 +73,7 @@ export class Game {
   private shop!: Shop
   private helpModal!: HelpModal
   private settingsButton!: SettingsButton
+  private characterSelect!: CharacterSelect
   private languageToggle!: LanguageToggle
   private soundToggle!: SoundToggle
   private tooltip!: Tooltip
@@ -103,6 +110,7 @@ export class Game {
     this.inventory = new Inventory()
     this.scoreEngine = new ScoreEngine()
     this.scoreEngine.setInventory(this.inventory)
+    this.scoreEngine.setCoinsGetter(() => this.run.coins)
 
     this.scoreBurst = new ScoreBurst()
     this.fxLayer.addChild(this.scoreBurst)
@@ -125,7 +133,8 @@ export class Game {
     this.hud = new HUD()
     this.uiLayer.addChild(this.hud)
 
-    this.insectSlots = new InsectSlots(3)
+    this.insectSlots = new InsectSlots(5)
+    this.insectSlots.onSellInsect = (uid) => this.handleSellInsect(uid)
     this.uiLayer.addChild(this.insectSlots)
     this.scrollTray = new ScrollTray(5)
     this.scrollTray.onScrollClick = (uid) => this.onScrollClicked(uid)
@@ -192,6 +201,10 @@ export class Game {
     this.tooltip = new Tooltip()
     this.uiLayer.addChild(this.tooltip)
 
+    this.characterSelect = new CharacterSelect()
+    this.characterSelect.onPick = (id) => this.onCharacterPicked(id)
+    this.uiLayer.addChild(this.characterSelect)
+
     const showTip = (text: string | null, x: number, y: number) => {
       if (text) this.tooltip.show(text, x, y)
       else this.tooltip.hide()
@@ -204,12 +217,69 @@ export class Game {
 
     onLangChange(() => this.onLanguageChanged())
 
-    this.inventory.addInsect(INSECT_CARDS.firefly)
-    this.inventory.addScroll(SCROLLS.silk_scroll)
-    this.inventory.addPotion(POTIONS.time_honey)
+    // 角色选择：优先用 localStorage 上次选择，否则弹窗
+    const savedChar = this.readSavedCharacter()
+    if (savedChar) {
+      this.applyCharacterToNewRun(savedChar)
+    } else {
+      // 给一张默认的启动套，避免空屏闪烁；但暂不发初始牌
+      this.applyCharacterToNewRun('weaver')
+      setTimeout(() => this.promptCharacterSelect(), 150)
+    }
 
     this.stepsLeft = this.run.currentStepLimit
     this.refreshHud()
+    this.dealInitialAnimation()
+  }
+
+  private readSavedCharacter(): CharacterId | null {
+    try {
+      const v = window.localStorage.getItem('webmaster_character')
+      if (v === 'weaver' || v === 'hamster' || v === 'mantis_warrior') return v
+    } catch { /* ignore */ }
+    return null
+  }
+
+  private saveCharacter(id: CharacterId): void {
+    try { window.localStorage.setItem('webmaster_character', id) } catch { /* ignore */ }
+  }
+
+  private applyCharacterToNewRun(id: CharacterId): void {
+    this.run.setCharacter(id)
+    const eff = this.run.character.effect
+    const baseCap = 5
+    this.inventory.reset()
+    this.inventory.setInsectSlotCap(baseCap + (eff.extraInsectSlot ?? 0))
+    // 起手套：起始虫 + 起手卷轴 + 起手药水（与之前行为保持一致）
+    const startingInsectId = eff.startingInsectId ?? 'firefly'
+    const starter = INSECT_CARDS[startingInsectId] ?? INSECT_CARDS.firefly
+    this.inventory.addInsect(starter)
+    this.inventory.addScroll(SCROLLS.silk_scroll)
+    this.inventory.addPotion(POTIONS.time_honey)
+    // 角色效果
+    this.scoreEngine.setCharacterMoveChipsBonus(eff.moveChipsBonus ?? 0)
+    this.saveCharacter(id)
+  }
+
+  private promptCharacterSelect(): void {
+    this.characterSelect.show()
+  }
+
+  private async onCharacterPicked(id: CharacterId): Promise<void> {
+    await this.characterSelect.hide()
+    sound.playButton()
+    // 重开一把，套用新角色
+    this.run.reset(false)
+    this.applyCharacterToNewRun(id)
+    this.scoreEngine.resetForNextLevel()
+    this.board.reset()
+    this.boardView.rebuild()
+    this.boardView.mode = 'drag'
+    this.stepsLeft = this.run.currentStepLimit
+    this.levelEnded = false
+    this.refreshHud()
+    this.hud.setLastPlay(0, 1)
+    this.hud.setCombo(0, 1)
     this.dealInitialAnimation()
   }
 
@@ -235,7 +305,7 @@ export class Game {
     this.hud.setXMult(this.scoreEngine.getXMult())
     this.hud.setBoss(this.run.isBossRound())
     this.stockPile.setRoundsLeft(this.board.stockRoundsLeft())
-    this.insectSlots.update(this.inventory.insects)
+    this.insectSlots.update(this.inventory.insects, this.inventory.foundation)
     this.scrollTray.update(this.inventory.scrolls)
     this.potionTray.update(this.inventory.potions)
     this.updateDeadlockWarning()
@@ -251,10 +321,7 @@ export class Game {
     const base = COIN_REWARDS.CLEAR_BONUS + 5
     const clears = this.scoreEngine.getClearCount() * COIN_REWARDS.PER_CLEAR
     const steps = Math.max(0, this.stepsLeft) * COIN_REWARDS.PER_STEP_LEFT
-    const interest = Math.min(
-      COIN_REWARDS.INTEREST_CAP,
-      Math.floor(this.run.coins / 5) * COIN_REWARDS.INTEREST_PER_5
-    )
+    const interest = this.run.getInterestAmount()
     const boss = this.run.isBossRound() ? BOSS_BONUS : 0
     return base + clears + steps + interest + boss
   }
@@ -357,11 +424,17 @@ export class Game {
     const intensity = Math.min(24, 4 + Math.log10(Math.max(10, breakdown.total)) * 3)
     screenShake(this.boardLayer, intensity, 0.35)
 
-    this.scoreBurst.play(
-      breakdown.chips,
-      breakdown.mult * breakdown.comboMult * breakdown.xmult,
-      breakdown.total
-    )
+    const totalMult = breakdown.mult * breakdown.comboMult * breakdown.xmult
+    const isBigEvent = !!result.cleared || breakdown.total >= 500
+    if (isBigEvent) {
+      this.scoreBurst.playFull(breakdown.chips, totalMult, breakdown.total)
+    } else {
+      const target = this.board.columns[attempt.toCol]
+      const cardsInCol = Math.max(1, target.length)
+      const popupX = COLUMN_START_X + attempt.toCol * COLUMN_GAP + CARD_WIDTH / 2
+      const popupY = COLUMN_Y + Math.min(cardsInCol - 1, 6) * 26 + CARD_HEIGHT * 0.35
+      this.scoreBurst.playCompact(breakdown.total, popupX, popupY, this.scoreEngine.getComboStreak())
+    }
 
     this.hud.setScore(this.scoreEngine.getTotal())
     this.stockPile.setRoundsLeft(this.board.stockRoundsLeft())
@@ -644,7 +717,7 @@ export class Game {
     else if (item.kind === 'scroll') this.inventory.addScroll(item.scrollDef!)
     else this.inventory.addPotion(item.potionDef!)
     this.shop.setCoinBalance(this.run.coins)
-    this.insectSlots.update(this.inventory.insects)
+    this.insectSlots.update(this.inventory.insects, this.inventory.foundation)
     this.scrollTray.update(this.inventory.scrolls)
     this.potionTray.update(this.inventory.potions)
     sound.playCoin()
@@ -688,14 +761,12 @@ export class Game {
     this.levelEnded = true
     this.cashOut.hide()
     const wasBoss = this.run.isBossRound()
+    const defeatedBoss = wasBoss ? this.run.currentBoss : null
     const clearCount = this.scoreEngine.getClearCount()
     const base = COIN_REWARDS.CLEAR_BONUS + 5
     const clearBonus = clearCount * COIN_REWARDS.PER_CLEAR
     const stepBonus = Math.max(0, this.stepsLeft) * COIN_REWARDS.PER_STEP_LEFT
-    const interest = Math.min(
-      COIN_REWARDS.INTEREST_CAP,
-      Math.floor(this.run.coins / 5) * COIN_REWARDS.INTEREST_PER_5
-    )
+    const interest = this.run.getInterestAmount()
     const bossBonus = wasBoss ? BOSS_BONUS : 0
     const totalReward = base + clearBonus + stepBonus + interest + bossBonus
     this.run.coins += totalReward
@@ -703,6 +774,11 @@ export class Game {
     if (wasBoss && this.inventory.canAddInsect()) {
       const rare = rollRandomInsect(3, 5)
       this.inventory.addInsect(rare)
+    }
+
+    // 击败 Hoarder 后下家商店涨价
+    if (defeatedBoss?.effect.shopMarkup) {
+      this.run.nextShopMarkup = defeatedBoss.effect.shopMarkup
     }
 
     this.run.advance()
@@ -725,7 +801,16 @@ export class Game {
   }
 
   private openShop(totalReward: number, breakdown: { base: number; clears: number; steps: number; interest: number; bossBonus: number }): void {
+    // 每次进商店意味着又完成一关，更新昆虫持有轮数和售价
+    this.inventory.advanceRound()
+    this.insectSlots.update(this.inventory.insects, this.inventory.foundation)
     this.shopItems = rollShopItems()
+    // 应用上一轮 boss 遗留的涨价 markup
+    const markup = this.run.nextShopMarkup
+    if (markup !== 1) {
+      for (const item of this.shopItems) item.price = Math.max(1, Math.ceil(item.price * markup))
+    }
+    this.run.nextShopMarkup = 1
     this.shop.setItems(this.shopItems)
     this.shop.setCoinBalance(this.run.coins)
     this.shop.setRewardInfo({
@@ -737,6 +822,20 @@ export class Game {
       interest: breakdown.interest
     })
     this.shop.show()
+  }
+
+  private handleSellInsect(uid: string): void {
+    if (this.levelEnded && !this.shop.visible) return
+    const ins = this.inventory.findInsect(uid)
+    if (!ins) return
+    const mult = this.run.character.effect.sellPriceMult ?? 1
+    const price = Math.max(1, Math.ceil(this.inventory.getSellPrice(uid) * mult))
+    this.inventory.removeInsect(uid)
+    this.run.coins += price
+    sound.playCoin()
+    this.insectSlots.update(this.inventory.insects, this.inventory.foundation)
+    this.hud.setCoins(this.run.coins)
+    if (this.shop.visible) this.shop.setCoinBalance(this.run.coins)
   }
 
   private endLevelLose(): void {
@@ -754,11 +853,9 @@ export class Game {
 
   private async restartRun(): Promise<void> {
     await this.modal.hide()
-    this.run.reset()
-    this.inventory.reset()
-    this.inventory.addInsect(INSECT_CARDS.firefly)
-    this.inventory.addScroll(SCROLLS.silk_scroll)
-    this.inventory.addPotion(POTIONS.time_honey)
+    // 保留当前角色，重置 run（金币、ante）并重新发起手套
+    this.run.reset(true)
+    this.applyCharacterToNewRun(this.run.characterId)
     this.prepareLevel()
   }
 
@@ -766,8 +863,16 @@ export class Game {
     this.levelEnded = false
     this.stepsLeft = this.run.currentStepLimit
     this.scoreEngine.resetForNextLevel()
+
+    const boss = this.run.currentBoss
+    this.scoreEngine.setClearChipsPenalty(boss?.effect.clearChipsPenalty ?? 1)
+
+    const enhancementsToApply = boss?.effect.noEnhancementReveal
+      ? new Map()
+      : this.run.deckEnhancements
+
     this.board.reset(undefined, {
-      enhancements: this.run.deckEnhancements,
+      enhancements: enhancementsToApply,
       removedIds: this.run.removedCardIds
     })
     this.boardView.rebuild()
@@ -783,7 +888,7 @@ export class Game {
     if (this.run.isBossRound()) {
       sound.startAmbient('boss')
       sound.playBoss()
-      await this.bossBanner.play()
+      await this.bossBanner.play(boss)
     } else {
       sound.startAmbient('normal')
     }

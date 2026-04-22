@@ -172,9 +172,8 @@ export class SoundEngine {
   // === 程序化 BGM ===
 
   /**
-   * 启动 / 切换 BGM。不会重复启动相同的 mode。
-   *  - normal：阴沉 D 小调 drone + pad + 随机钟琴琶音
-   *  - boss：低两度（C# 小调）+ 更扭曲的波形
+   * 启动 / 切换 BGM。正常关卡是 C 大调 I-V-vi-IV（「Axis of Awesome」循环），
+   * boss 关切成 A 小调仍保持欢快的八拍琶音节奏。
    */
   startAmbient(mode: 'normal' | 'boss'): void {
     if (!this.ctx || !this.musicBus) return
@@ -182,140 +181,225 @@ export class SoundEngine {
     this.stopAmbient()
     this.bgmMode = mode
 
-    const ctx = this.ctx
-    const musicBus = this.musicBus
-    const now = ctx.currentTime
-
-    // 主调参数
     const isBoss = mode === 'boss'
-    const rootHz = isBoss ? 34.65 : 36.71  // C#1 / D1
-    // 和弦按半音偏移（相对 root）：根、五度、小七、九度
-    const voiceSemis = [0, 7, 10, 14]
 
-    // 低频 drone（正弦 + 次谐波振动）
-    const droneOsc = ctx.createOscillator()
-    droneOsc.type = 'sine'
-    droneOsc.frequency.value = rootHz
-    const droneGain = ctx.createGain()
-    droneGain.gain.value = 0
-    droneGain.gain.linearRampToValueAtTime(0.42, now + 3)
-    // LFO 颤音
-    const lfo = ctx.createOscillator()
-    lfo.frequency.value = 0.12
-    const lfoGain = ctx.createGain()
-    lfoGain.gain.value = 1.4
-    lfo.connect(lfoGain)
-    lfoGain.connect(droneOsc.frequency)
-    droneOsc.connect(droneGain)
-    droneGain.connect(musicBus)
-    droneOsc.start(now)
-    lfo.start(now)
-    this.bgmNodes.push({ osc: droneOsc, gain: droneGain, lfo, lfoGain })
+    // 调性：normal = C3 (C 大调)；boss = A2 (A 小调，自然小调的主音)
+    const rootHz = isBoss ? 110 : 130.81
 
-    // Pad 和声（三个不同八度的声部）
-    voiceSemis.forEach((semi, i) => {
-      const padOsc = ctx.createOscillator()
-      padOsc.type = isBoss ? 'sawtooth' : 'triangle'
-      // 主 pad 放在 3~4 八度
-      const octave = i === 0 ? 3 : 4
-      padOsc.frequency.value = rootHz * Math.pow(2, octave) * Math.pow(2, semi / 12)
-      // 轻微失调制造合唱感
-      padOsc.detune.value = (i - 1.5) * 6
+    // 和弦进行 - 半音相对 root
+    // 大调（欢快）：Cmaj7 - G7 - Am7 - Fmaj7
+    // 小调（boss）：Am7 - Em7 - Fmaj7 - G7（自然小调级数 i-v-VI-VII，不使人毛骨悚然）
+    const progressionMajor = [
+      [0, 4, 7, 11],    // Cmaj7
+      [7, 11, 14, 17],  // G7
+      [9, 12, 16, 19],  // Am7
+      [5, 9, 12, 16]    // Fmaj7
+    ]
+    const progressionMinor = [
+      [0, 3, 7, 10],    // Am7
+      [7, 10, 14, 17],  // Em7
+      [8, 12, 15, 19],  // Fmaj7 (from A: F is +8 semitones)
+      [10, 14, 17, 20]  // G7 (from A: G is +10 semitones)
+    ]
+    const progression = isBoss ? progressionMinor : progressionMajor
 
-      const filter = ctx.createBiquadFilter()
-      filter.type = 'lowpass'
-      filter.frequency.value = isBoss ? 650 : 900
-      filter.Q.value = 2
+    // 每个和弦的根音（写相对 root 的半音）
+    const bassSemisMajor = [0, 7, 9, 5]
+    const bassSemisMinor = [0, 7, 8, 10]
+    const bassSemis = isBoss ? bassSemisMinor : bassSemisMajor
 
-      const padGain = ctx.createGain()
-      padGain.gain.value = 0
-      const targetVol = isBoss ? 0.07 : 0.05
-      padGain.gain.linearRampToValueAtTime(targetVol, now + 4 + i * 0.4)
+    // 每和弦 3.0 秒（约 80 BPM，4 拍一和弦）；boss 节奏加快一点
+    const chordDuration = isBoss ? 2.6 : 3.0
+    const beatsPerChord = 8
 
-      // pad 各自的呼吸 LFO
-      const breatheLfo = ctx.createOscillator()
-      breatheLfo.frequency.value = 0.07 + i * 0.03
-      const breatheGain = ctx.createGain()
-      breatheGain.gain.value = targetVol * 0.4
-      breatheLfo.connect(breatheGain)
-      breatheGain.connect(padGain.gain)
-      breatheLfo.start(now)
+    // 琶音谱面 [和弦音索引, 八度偏移]
+    const arpPatternNormal: [number, number][] = [
+      [0, 1], [2, 1], [1, 2], [3, 1],
+      [2, 1], [0, 2], [1, 1], [3, 1]
+    ]
+    const arpPatternBoss: [number, number][] = [
+      [0, 1], [2, 1], [3, 1], [1, 2],
+      [3, 1], [2, 2], [1, 1], [0, 1]
+    ]
+    const arpPattern = isBoss ? arpPatternBoss : arpPatternNormal
 
-      padOsc.connect(filter)
-      filter.connect(padGain)
-      padGain.connect(musicBus)
-      padOsc.start(now)
-      this.bgmNodes.push({ osc: padOsc, gain: padGain, lfo: breatheLfo, lfoGain: breatheGain })
-    })
+    let step = 0
 
-    // 随机琶音（钟/水滴）
-    const scale = isBoss ? [0, 3, 5, 6, 8, 11] : [0, 3, 5, 7, 10, 12, 15]
-    const arpTick = () => {
-      if (!this.ctx || !this.musicBus) return
-      if (this.bgmMode !== mode) return
-      const chance = isBoss ? 0.4 : 0.55
-      if (Math.random() < chance) {
-        const count = 1 + Math.floor(Math.random() * 3)
-        for (let i = 0; i < count; i++) {
-          const semi = scale[Math.floor(Math.random() * scale.length)]
-          const octave = 5 + Math.floor(Math.random() * 2)
-          const f = rootHz * Math.pow(2, octave) * Math.pow(2, semi / 12)
-          setTimeout(() => this.playBellTone(f, isBoss ? 0.7 : 1.1), i * 220 + Math.random() * 180)
-        }
+    const tick = () => {
+      if (this.bgmMode !== mode || !this.ctx || !this.musicBus) return
+
+      const chordIdx = step % progression.length
+      const chord = progression[chordIdx]
+      const bassSemi = bassSemis[chordIdx]
+
+      // 低音：根音降一个八度，柔软三角波
+      const bassFreq = rootHz * Math.pow(2, (bassSemi - 12) / 12)
+      this.playSoftVoice(bassFreq, chordDuration * 1.1, {
+        type: 'triangle', peak: 0.09, attack: 0.2, release: 0.7
+      })
+      // 弱八度叠加（让低频更饱满，不空洞）
+      this.playSoftVoice(bassFreq * 2, chordDuration * 1.1, {
+        type: 'sine', peak: 0.028, attack: 0.25, release: 0.7
+      })
+
+      // 垫音（Pad）：同时拉住和弦所有音
+      for (const semi of chord) {
+        const freq = rootHz * Math.pow(2, semi / 12)
+        this.playSoftVoice(freq, chordDuration * 1.05, {
+          type: 'triangle',
+          peak: 0.028,
+          attack: 0.45,
+          release: 0.85,
+          filterFreq: 1800
+        })
       }
-      const nextDelay = 4200 + Math.random() * 3500
-      this.bgmTimer = window.setTimeout(arpTick, nextDelay)
+
+      // 琶音：像音乐盒一样叮咚的旋律
+      for (let i = 0; i < beatsPerChord; i++) {
+        const [toneIdx, octOffset] = arpPattern[i % arpPattern.length]
+        const semi = chord[toneIdx % chord.length] + 12 * octOffset
+        const freq = rootHz * Math.pow(2, semi / 12)
+        const delayMs = i * chordDuration * 1000 / beatsPerChord
+        setTimeout(() => {
+          if (this.bgmMode === mode) this.playBellTone(freq, 0.9)
+        }, delayMs)
+      }
+
+      // 偶发高音铃铛点缀（让音乐有「惊喜」感）
+      if (Math.random() < 0.35) {
+        const sparkleSemi = chord[Math.floor(Math.random() * chord.length)] + 24
+        const sparkleFreq = rootHz * Math.pow(2, sparkleSemi / 12)
+        setTimeout(() => {
+          if (this.bgmMode === mode) this.playBellTone(sparkleFreq, 1.3)
+        }, chordDuration * 1000 * (0.5 + Math.random() * 0.4))
+      }
+
+      step++
+      this.bgmTimer = window.setTimeout(tick, chordDuration * 1000)
     }
-    this.bgmTimer = window.setTimeout(arpTick, 2500)
+
+    // 轻微预热延迟
+    this.bgmTimer = window.setTimeout(tick, 200)
   }
 
-  /** 环境钟琴音（比 SFX 更衰减得长） */
+  /**
+   * 带 ADSR 包络的柔和持续音，用于 BGM 的 pad / 低音。
+   */
+  private playSoftVoice(
+    freq: number,
+    duration: number,
+    opts: {
+      type?: OscillatorType
+      peak?: number
+      attack?: number
+      release?: number
+      filterFreq?: number
+    }
+  ): void {
+    if (!this.ctx || !this.musicBus) return
+    const ctx = this.ctx
+    const bus = this.musicBus
+    const now = ctx.currentTime
+
+    const peak = opts.peak ?? 0.05
+    const attack = opts.attack ?? 0.3
+    const release = opts.release ?? 0.6
+    const sustain = Math.max(0.05, duration - attack - release)
+
+    const osc = ctx.createOscillator()
+    osc.type = opts.type ?? 'triangle'
+    osc.frequency.value = freq
+
+    const gain = ctx.createGain()
+    gain.gain.setValueAtTime(0.0001, now)
+    gain.gain.exponentialRampToValueAtTime(peak, now + attack)
+    gain.gain.setValueAtTime(peak, now + attack + sustain)
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + attack + sustain + release)
+
+    osc.connect(gain)
+
+    if (opts.filterFreq) {
+      const filter = ctx.createBiquadFilter()
+      filter.type = 'lowpass'
+      filter.frequency.value = opts.filterFreq
+      filter.Q.value = 0.7
+      gain.connect(filter)
+      filter.connect(bus)
+    } else {
+      gain.connect(bus)
+    }
+
+    osc.start(now)
+    osc.stop(now + duration + 0.2)
+  }
+
+  /** 音乐盒 / 钟琴音：三层谐波叠加，略带金属质感但柔和 */
   private playBellTone(freq: number, duration: number): void {
     if (!this.ctx || !this.musicBus) return
-    const now = this.ctx.currentTime
-    const osc = this.ctx.createOscillator()
-    osc.type = 'sine'
-    osc.frequency.value = freq
-    const gain = this.ctx.createGain()
-    gain.gain.setValueAtTime(0.0001, now)
-    gain.gain.exponentialRampToValueAtTime(0.08, now + 0.005)
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + duration)
-    osc.connect(gain)
-    gain.connect(this.musicBus)
-    osc.start(now)
-    osc.stop(now + duration + 0.02)
+    const ctx = this.ctx
+    const bus = this.musicBus
+    const now = ctx.currentTime
 
-    // 轻微二次谐波增加金属质感
-    const osc2 = this.ctx.createOscillator()
+    // 基频（暖正弦）
+    const osc1 = ctx.createOscillator()
+    osc1.type = 'sine'
+    osc1.frequency.value = freq
+    const gain1 = ctx.createGain()
+    gain1.gain.setValueAtTime(0.0001, now)
+    gain1.gain.exponentialRampToValueAtTime(0.075, now + 0.003)
+    gain1.gain.exponentialRampToValueAtTime(0.0001, now + duration)
+    osc1.connect(gain1)
+    gain1.connect(bus)
+    osc1.start(now)
+    osc1.stop(now + duration + 0.05)
+
+    // 二次谐波（闪光）
+    const osc2 = ctx.createOscillator()
     osc2.type = 'sine'
-    osc2.frequency.value = freq * 2.01
-    const gain2 = this.ctx.createGain()
+    osc2.frequency.value = freq * 2.005  // 轻微失调制造闪烁
+    const gain2 = ctx.createGain()
     gain2.gain.setValueAtTime(0.0001, now)
-    gain2.gain.exponentialRampToValueAtTime(0.025, now + 0.01)
-    gain2.gain.exponentialRampToValueAtTime(0.0001, now + duration * 0.8)
+    gain2.gain.exponentialRampToValueAtTime(0.024, now + 0.006)
+    gain2.gain.exponentialRampToValueAtTime(0.0001, now + duration * 0.65)
     osc2.connect(gain2)
-    gain2.connect(this.musicBus)
+    gain2.connect(bus)
     osc2.start(now)
-    osc2.stop(now + duration + 0.02)
+    osc2.stop(now + duration + 0.05)
+
+    // 三次谐波（音乐盒质感）
+    const osc3 = ctx.createOscillator()
+    osc3.type = 'sine'
+    osc3.frequency.value = freq * 3.0
+    const gain3 = ctx.createGain()
+    gain3.gain.setValueAtTime(0.0001, now)
+    gain3.gain.exponentialRampToValueAtTime(0.010, now + 0.004)
+    gain3.gain.exponentialRampToValueAtTime(0.0001, now + duration * 0.4)
+    osc3.connect(gain3)
+    gain3.connect(bus)
+    osc3.start(now)
+    osc3.stop(now + duration + 0.05)
   }
 
   stopAmbient(): void {
-    if (!this.ctx) return
-    const now = this.ctx.currentTime
-    for (const node of this.bgmNodes) {
-      try {
-        node.gain.gain.cancelScheduledValues(now)
-        node.gain.gain.linearRampToValueAtTime(0.0001, now + 0.8)
-        node.osc.stop(now + 0.9)
-        node.lfo?.stop(now + 0.9)
-      } catch { /* ignore */ }
-    }
-    this.bgmNodes = []
     if (this.bgmTimer !== null) {
       window.clearTimeout(this.bgmTimer)
       this.bgmTimer = null
     }
     this.bgmMode = 'none'
+    // 新版 BGM 是一次性计划的 voice，靠 release 包络自然衰减，不再需要追踪 bgmNodes。
+    // 但兼容旧实现中残留的持续 oscillator：淡出后停止。
+    if (this.ctx) {
+      const now = this.ctx.currentTime
+      for (const node of this.bgmNodes) {
+        try {
+          node.gain.gain.cancelScheduledValues(now)
+          node.gain.gain.linearRampToValueAtTime(0.0001, now + 0.5)
+          node.osc.stop(now + 0.55)
+          node.lfo?.stop(now + 0.55)
+        } catch { /* ignore */ }
+      }
+    }
+    this.bgmNodes = []
   }
 }
 

@@ -31,6 +31,18 @@ export interface InsectCardDef {
   perInsectMultBonus?: number    // per held insect count
   scrollUseMultAccum?: number    // per scroll used this round
   potionUseChipsBonus?: number   // per potion used this round
+
+  /** v2 additions */
+  /** 占据 foundation 特殊槽，而不是常规 5 槽 */
+  isFoundation?: boolean
+  /** 每关持有 +N 出售价格（例如蛋） */
+  sellPriceGrowth?: number
+  /** 每张其他昆虫卡（不含自己）在 foundation 上时额外 +N Chips/move */
+  foundationPerInsectChips?: number
+  /** 每持有 $N 金币 +1 Mult/move */
+  moneyPerMult?: number
+  /** 每持有 $N 金币，消除时 +0.04 X-Mult */
+  moneyPerXMultOnClear?: number
 }
 
 export const INSECT_CARDS: Record<string, InsectCardDef> = {
@@ -64,6 +76,16 @@ export const INSECT_CARDS: Record<string, InsectCardDef> = {
     color: 0x9a7a8f,
     clearCoinBonus: 3
   },
+  egg: {
+    id: 'egg',
+    name: 'Spider Egg',
+    description: 'Does nothing. Sell price +$3 each round held.',
+    rarity: 1,
+    price: 4,
+    glyph: '\u25CB',
+    color: 0xf0e8c8,
+    sellPriceGrowth: 3
+  },
   ladybug: {
     id: 'ladybug',
     name: 'Ladybug',
@@ -93,6 +115,28 @@ export const INSECT_CARDS: Record<string, InsectCardDef> = {
     glyph: 'M',
     color: 0x5a7a3a,
     lowRankMultMult: 3
+  },
+  hoarder_beetle: {
+    id: 'hoarder_beetle',
+    name: 'Hoarder Beetle',
+    description: '+1 Mult for every $8 you currently own.',
+    rarity: 2,
+    price: 5,
+    glyph: '\u26C3',
+    color: 0xc89868,
+    moneyPerMult: 8
+  },
+  hermit_crab: {
+    id: 'hermit_crab',
+    name: 'Hermit Crab',
+    description: 'Foundation (extra slot). +5 Chips/move, and each insect you own adds +2 Chips more.',
+    rarity: 2,
+    price: 6,
+    glyph: '\u273D',
+    color: 0xe68a5a,
+    isFoundation: true,
+    onMoveChipsBonus: 5,
+    foundationPerInsectChips: 2
   },
   queen_bee: {
     id: 'queen_bee',
@@ -143,6 +187,16 @@ export const INSECT_CARDS: Record<string, InsectCardDef> = {
     glyph: 'R',
     color: 0x7a9e55,
     allowCrossColorStack: true
+  },
+  truffle_worm: {
+    id: 'truffle_worm',
+    name: 'Truffle Worm',
+    description: 'On each clear: +0.04 X-Mult per $15 you own.',
+    rarity: 3,
+    price: 8,
+    glyph: '\u2698',
+    color: 0x8a5fb0,
+    moneyPerXMultOnClear: 15
   },
   spider_mother: {
     id: 'spider_mother',
